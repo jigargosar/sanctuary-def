@@ -401,16 +401,7 @@
     return {
       '@@type': 'sanctuary-def/Type',
       type: 'RECORD',
-      test: function(x) {
-        if (x == null) return false;
-        for (var idx = 0; idx < names.length; idx += 1) {
-          var name = names[idx];
-          if (!has(name, x) || !test(fields[name], x[name]).valid) {
-            return false;
-          }
-        }
-        return true;
-      },
+      test: K(true),
       toString: function() {
         var s = '{';
         for (var idx = 0; idx < names.length; idx += 1) {
@@ -643,20 +634,32 @@
     );
   };
 
-  //  equalTypes :: (Type, Type, Boolean) -> Boolean
-  var equalTypes = function equalTypes(t1, t2, loose) {
-    if (t1.type === 'INCONSISTENT' || t2.type === 'INCONSISTENT') return loose;
-    if (t1.type === 'UNKNOWN' || t2.type === 'UNKNOWN') return true;
+  //  Strictness = Strict | Loose
+
+  //  Strict :: Strictness
+  var Strict = 'Strict';
+
+  //  Loose :: Strictness
+  var Loose = 'Loose';
+
+  //  equalTypes :: (Strictness, Type, Type) -> Boolean
+  var equalTypes = function equalTypes(strictness, t1, t2) {
+    if (t1.type === 'INCONSISTENT' || t2.type === 'INCONSISTENT') {
+      return strictness === Loose;
+    }
+    if (t1.type === 'UNKNOWN' || t2.type === 'UNKNOWN') {
+      return true;
+    }
     switch (t1.type) {
       case 'NULLARY':
         return t1.type === t2.type && t1.name === t2.name;
       case 'UNARY':
         return t1.type === t2.type && t1.name === t2.name &&
-               equalTypes(t1.$1, t2.$1, loose);
+               equalTypes(strictness, t1.$1, t2.$1);
       case 'BINARY':
         return t1.type === t2.type && t1.name === t2.name &&
-               equalTypes(t1.$1, t2.$1, loose) &&
-               equalTypes(t1.$2, t2.$2, loose);
+               equalTypes(strictness, t1.$1, t2.$1) &&
+               equalTypes(strictness, t1.$2, t2.$2);
       case 'ENUM':
         return t1.type === t2.type && show(t1) === show(t2);
       case 'RECORD':
@@ -667,8 +670,8 @@
     }
   };
 
-  //  commonTypes :: ([[Type]], Boolean) -> [Type]
-  var commonTypes = function(typeses, loose) {
+  //  commonTypes :: (Strictness, [[Type]]) -> [Type]
+  var commonTypes = function(strictness, typeses) {
     var types = chain(typeses, id);
     if (isEmpty(types)) return [];
 
@@ -702,18 +705,93 @@
     return filter(candidates, function(t1) {
       return all(typeses, function(types) {
         return any(types, function(t2) {
-          return equalTypes(t1, t2, loose);
+          return equalTypes(strictness, t1, t2);
         });
       });
     });
   };
 
-  //  testNested :: (Type, Any, Integer) -> Result
-  var testNested = function(t, x, position) {
+  //  _determineActualTypes :: (Strictness, [Type], [Any]) -> [Type]
+  var _determineActualTypes = function recur(strictness, env, values) {
+    if (isEmpty(values)) return [Unknown];
+    //  consistentTypes :: [Type]
+    var consistentTypes = chain(env, rejectAny);
+    //  typeses :: [[Type]]
+    var typeses = map(values, function(value) {
+      return chain(consistentTypes, function(t) {
+        return (
+          t.name === 'sanctuary-def/Nullable' || !test(env, t, value).valid ?
+            [] :
+          t.type === 'UNARY' ?
+            map(recur(strictness, env, t._1(value)), UnaryType.from(t)) :
+          t.type === 'BINARY' ?
+            BinaryType.xprod(t,
+                             recur(strictness, env, t._1(value)),
+                             recur(strictness, env, t._2(value))) :
+          // else
+            [t]
+        );
+      });
+    });
+    //  common :: [Type]
+    var common = commonTypes(strictness, typeses);
+    if (!isEmpty(common)) return common;
+    //  If none of the values is a member of a type in the environment,
+    //  and all the values have the same type identifier, the values are
+    //  members of a "foreign" type.
+    if (isEmpty(filterTypesByValues(consistentTypes, values)) &&
+        all(values.slice(1), $$typeEq($$type(values[0])))) {
+      //  Create a nullary type for the foreign type.
+      return [type0($$type(values[0]))];
+    }
+    return [Inconsistent];
+  };
+
+  //  determineActualTypes :: (Strictness, [Type], [Any]) -> [Type]
+  var determineActualTypes = function(strictness, env, values) {
+    return filter(_determineActualTypes(strictness, env, values), function(t) {
+      return t.type !== 'INCONSISTENT' && t.type !== 'UNKNOWN';
+    });
+  };
+
+  //  testRecord :: ([Type], Type, Any) -> Result
+  var testRecord = function(env, t, x) {
+    var valid = {valid: true, value: x};
+    var invalid = {valid: false, value: x, typePath: [t], propPath: []};
+
+    if (x == null) return invalid;
+
+    //  mapping :: StrMap [Any]
+    var mapping = {};
+
+    for (var idx = 0, names = keys(t.fields); idx < names.length; idx += 1) {
+      var name = names[idx];
+      if (!has(name, x)) return invalid;
+      var type = t.fields[name];
+      if (type.type === 'VARIABLE') {
+        if (!has(type.name, mapping)) mapping[type.name] = [];
+        mapping[type.name].push(x[name]);
+      } else if (!test(env, type, x[name]).valid) {
+        return invalid;
+      }
+    }
+
+    var typeVarNames = keys(mapping);
+    for (idx = 0; idx < typeVarNames.length; idx += 1) {
+      var values = mapping[typeVarNames[idx]];
+      var actualTypes = determineActualTypes(Strict, env, values);
+      if (isEmpty(actualTypes) && !isEmpty(values)) return invalid;
+    }
+
+    return valid;
+  };
+
+  //  testNested :: ([Type], Type, Any, Integer) -> Result
+  var testNested = function(env, t, x, position) {
     var _ = '_' + String(position);
     var $ = '$' + String(position);
     for (var idx = 0, xs = t[_](x); idx < xs.length; idx += 1) {
-      var result = test(t[$], xs[idx]);
+      var result = test(env, t[$], xs[idx]);
       if (!result.valid) {
         result.typePath.unshift(t);
         result.propPath.unshift($);
@@ -723,15 +801,17 @@
     return {valid: true, value: x};
   };
 
-  //  test :: (Type, Any) -> Result
-  var test = function(t, x) {
-    if (!t.test(x)) {
+  //  test :: ([Type], Type, Any) -> Result
+  var test = function(env, t, x) {
+    if (t.type === 'RECORD') {
+      return testRecord(env, t, x);
+    } else if (!t.test(x)) {
       return {valid: false, value: x, typePath: [t], propPath: []};
     } else if (t.type === 'UNARY') {
-      return testNested(t, x, 1);
+      return testNested(env, t, x, 1);
     } else if (t.type === 'BINARY') {
-      var lhs = testNested(t, x, 1);
-      return lhs.valid ? testNested(t, x, 2) : lhs;
+      var lhs = testNested(env, t, x, 1);
+      return lhs.valid ? testNested(env, t, x, 2) : lhs;
     } else {
       return {valid: true, value: x};
     }
@@ -741,7 +821,7 @@
   var filterTypesByValues = function(types, values) {
     return filter(types, function(t) {
       return all(values, function(x) {
-        return test(t, x).valid;
+        return test(types, t, x).valid;
       });
     });
   };
@@ -1051,63 +1131,10 @@
       };
     };
 
-    //  _determineActualTypes :: Boolean -> [Any] -> [Type]
-    var _determineActualTypes = function(loose) {
-      return function recur(values) {
-        if (isEmpty(values)) return [Unknown];
-        //  consistentTypes :: [Type]
-        var consistentTypes = chain(env, rejectAny);
-        //  typeses :: [[Type]]
-        var typeses = map(values, function(value) {
-          return chain(consistentTypes, function(t) {
-            return (
-              t.name === 'sanctuary-def/Nullable' || !test(t, value).valid ?
-                [] :
-              t.type === 'UNARY' ?
-                map(recur(t._1(value)), UnaryType.from(t)) :
-              t.type === 'BINARY' ?
-                BinaryType.xprod(t, recur(t._1(value)), recur(t._2(value))) :
-              // else
-                [t]
-            );
-          });
-        });
-        //  common :: [Type]
-        var common = commonTypes(typeses, loose);
-        if (!isEmpty(common)) return common;
-        //  If none of the values is a member of a type in the environment,
-        //  and all the values have the same type identifier, the values are
-        //  members of a "foreign" type.
-        if (isEmpty(filterTypesByValues(consistentTypes, values)) &&
-            all(values.slice(1), $$typeEq($$type(values[0])))) {
-          //  Create a nullary type for the foreign type.
-          return [type0($$type(values[0]))];
-        }
-        return [Inconsistent];
-      };
-    };
-
-    //  rejectInconsistent :: [Type] -> [Type]
-    var rejectInconsistent = function(types) {
-      return filter(types, function(t) {
-        return t.type !== 'INCONSISTENT' && t.type !== 'UNKNOWN';
-      });
-    };
-
-    //  determineActualTypesStrict :: [Any] -> [Type]
-    var determineActualTypesStrict = function(values) {
-      return rejectInconsistent(_determineActualTypes(false)(values));
-    };
-
-    //  determineActualTypesLoose :: [Any] -> [Type]
-    var determineActualTypesLoose = function(values) {
-      return rejectInconsistent(_determineActualTypes(true)(values));
-    };
-
     //  valuesToPairs :: [Any] -> [Pair Any [Type]]
     var valuesToPairs = function(values) {
       return map(values, function(x) {
-        return [x, determineActualTypesLoose([x])];
+        return [x, determineActualTypes(Loose, env, [x])];
       });
     };
 
@@ -1165,7 +1192,7 @@
                 );
               }
             } else {
-              okTypes = determineActualTypesStrict(values);
+              okTypes = determineActualTypes(Strict, env, values);
               if (isEmpty(okTypes) && !isEmpty(values)) {
                 throw typeVarConstraintViolation(
                   name,
@@ -1212,7 +1239,7 @@
                                     or($2s, [expType.$2]));
 
           default:
-            return determineActualTypesStrict(values);
+            return determineActualTypes(Strict, env, values);
         }
       };
     };
@@ -1273,7 +1300,7 @@
 
             var value = arguments[idx];
             if (checkTypes) {
-              result = test(expTypes[index], value);
+              result = test(env, expTypes[index], value);
               if (!result.valid) {
                 throw invalidValue(name,
                                    constraints,
@@ -1298,7 +1325,7 @@
         if (isEmpty(indexes)) {
           var returnValue = impl.apply(this, values);
           if (checkTypes) {
-            result = test(last(expTypes), returnValue);
+            result = test(env, last(expTypes), returnValue);
             if (!result.valid) {
               throw invalidValue(name,
                                  constraints,
@@ -1337,7 +1364,7 @@
         var Type = RecordType({test: $.Function});
         var types = [$.String, $.Object, $.Array(Type), $.Function];
         for (var idx = 0; idx < types.length; idx += 1) {
-          if (!test(types[idx], arguments[idx]).valid) {
+          if (!test(env, types[idx], arguments[idx]).valid) {
             throw invalidArgument('def', [types[idx]], arguments[idx], idx);
           }
         }

@@ -924,7 +924,10 @@ describe('def', function() {
     //  Line :: Type
     var Line = $.RecordType({start: Point, end: Point});
 
-    var env = $.env.concat([Point, Line]);
+    //  Foo :: Type
+    var Foo = $.RecordType({x: a, y: a});
+
+    var env = $.env.concat([Point, Line, Foo]);
     var def = $.create(true, env);
 
     //  dist :: Point -> Point -> Number
@@ -1020,6 +1023,50 @@ describe('def', function() {
                    '\n' +
                    '  - "x": /XXX/\n' +
                    '  - "y": /XXX/\n'));
+
+    //  f :: Foo -> Foo
+    var f = def('f', {}, [Foo, Foo], R.always({x: 'abc', y: 123}));
+
+    throws(function() { f({x: 'abc', y: 123}); },
+           errorEq(TypeError,
+                   'Invalid value\n' +
+                   '\n' +
+                   'f :: { x :: a, y :: a } -> { x :: a, y :: a }\n' +
+                   '     ^^^^^^^^^^^^^^^^^^\n' +
+                   '             1\n' +
+                   '\n' +
+                   '1)  {"x": "abc", "y": 123} :: Object\n' +
+                   '\n' +
+                   'The value at position 1 is not a member of ‘{ x :: a, y :: a }’.\n'));
+
+    throws(function() { f({x: null, y: null}); },
+           errorEq(TypeError,
+                   'Invalid value\n' +
+                   '\n' +
+                   'f :: { x :: a, y :: a } -> { x :: a, y :: a }\n' +
+                   '                           ^^^^^^^^^^^^^^^^^^\n' +
+                   '                                   1\n' +
+                   '\n' +
+                   '1)  {"x": "abc", "y": 123} :: Object\n' +
+                   '\n' +
+                   'The value at position 1 is not a member of ‘{ x :: a, y :: a }’.\n'));
+
+//  //  g :: Foo -> Foo
+//  var g = def('g', {}, [Foo, Foo], R.always({x: 0, y: 0}));
+
+//  throws(function() { g({x: null, y: null}); },
+//         errorEq(TypeError,
+//                 'Type-variable constraint violation\n' +
+//                 '\n' +
+//                 'g :: { x :: a, y :: a } -> { x :: a, y :: a }\n' +
+//                 '            ^                     ^\n' +
+//                 '            1                     2\n' +
+//                 '\n' +
+//                 '1)  null :: Null\n' +
+//                 '\n' +
+//                 '2)  0 :: Number\n' +
+//                 '\n' +
+//                 'Since there is no type of which all the above values are members, the type-variable constraint has been violated.\n'));
   });
 
   it('supports "nullable" types', function() {
