@@ -3,28 +3,33 @@
 var assert = require('assert');
 var vm = require('vm');
 
-var R = require('ramda');
+var Z = require('sanctuary-type-classes');
 
 var $ = require('..');
 
 
 var throws = assert.throws;
 
+var _ = {'@@functional/placeholder': true};
+
 var eq = function(actual, expected) {
   assert.strictEqual(arguments.length, 2);
-  assert.strictEqual(R.toString(actual), R.toString(expected));
+  assert.strictEqual(Z.toString(actual), Z.toString(expected));
+  assert.strictEqual(Z.equals(actual, expected), true);
 };
 
-//  errorEq :: TypeRep a -> String -> Error -> Boolean
-var errorEq = R.curry(function(type, message, error) {
-  return error.constructor === type && error.message === message;
-});
+//  errorEq :: (TypeRep a, String) -> Error -> Boolean
+var errorEq = function(type, message) {
+  return function(error) {
+    return error.constructor === type && error.message === message;
+  };
+};
 
-//  hasMethods :: Array String -> a -> Boolean
-var hasMethods = R.curry(function(names, x) {
-  return x != null &&
-         R.all(function(k) { return typeof x[k] === 'function'; }, names);
-});
+//  identity :: a -> a
+var identity = function(x) { return x; };
+
+//  length :: { length :: a } -> a
+var length = function(x) { return x.length; };
 
 
 var def = $.create({checkTypes: true, env: $.env});
@@ -33,7 +38,7 @@ var a = $.TypeVariable('a');
 var b = $.TypeVariable('b');
 var m = $.UnaryTypeVariable('m');
 
-var list  = R.unapply(R.identity);
+var list = function() { return Array.prototype.slice.call(arguments, 0); };
 
 var $0 = def('$0', {}, [$.Array(a)], list);
 var $1 = def('$1', {}, [a, $.Array(a)], list);
@@ -54,7 +59,7 @@ var MIN_SAFE_INTEGER = -MAX_SAFE_INTEGER;
 var Integer = $.NullaryType(
   'my-package/Integer',
   function(x) {
-    return R.type(x) === 'Number' &&
+    return $.Number._test(x) &&
            Math.floor(x) === Number(x) &&
            x >= MIN_SAFE_INTEGER &&
            x <= MAX_SAFE_INTEGER;
@@ -65,32 +70,36 @@ var Integer = $.NullaryType(
 //  Nothing :: Maybe a
 var Nothing = {
   '@@type': 'my-package/Maybe',
-  chain: function(f) { return this; },
-  concat: function() { throw new Error('Not implemented'); },
-  empty: function() { return this; },
-  isNothing: true,
+  'fantasy-land/equals': function(other) { return other.isNothing; },
+  'fantasy-land/empty': function() { return this; },
+  'fantasy-land/concat': function() { throw new Error('Not implemented'); },
+  'fantasy-land/map': function(f) { return this; },
+  'fantasy-land/ap': function(m) { return this; },
+  'fantasy-land/of': function(x) { return Just(x); },
+  'fantasy-land/chain': function(f) { return this; },
+  'fantasy-land/reduce': function(f, initial) { return initial; },
   isJust: false,
-  map: function(f) { return this; },
-  of: function(x) { return Just(x); },
-  or: R.identity,
-  reduce: function(f, initial) { return initial; },
-  toString: R.always('Nothing')
+  isNothing: true,
+  or: identity,
+  toString: function() { return 'Nothing'; }
 };
 
 //  Just :: a -> Maybe a
-var Just = function(x) {
+var Just = function Just(x) {
   return {
     '@@type': 'my-package/Maybe',
-    chain: function(f) { return f(x); },
-    concat: function() { throw new Error('Not implemented'); },
-    empty: R.always(Nothing),
-    isNothing: false,
+    'fantasy-land/equals': function(other) { return other.isJust && Z.equals(other.value, x); },
+    'fantasy-land/empty': function() { return Nothing; },
+    'fantasy-land/concat': function() { throw new Error('Not implemented'); },
+    'fantasy-land/map': function(f) { return Just(f(x)); },
+    'fantasy-land/ap': function(m) { return m['fantasy-land/map'](x); },
+    'fantasy-land/of': function(x) { return Just(x); },
+    'fantasy-land/chain': function(f) { return f(x); },
+    'fantasy-land/reduce': function(f, initial) { return f(initial, x); },
     isJust: true,
-    map: function(f) { return Just(f(x)); },
-    of: function(x) { return Just(x); },
+    isNothing: false,
     or: function() { return this; },
-    reduce: function(f, initial) { return f(initial, x); },
-    toString: R.always('Just(' + R.toString(x) + ')'),
+    toString: function() { return 'Just(' + Z.toString(x) + ')'; },
     value: x
   };
 };
@@ -107,12 +116,16 @@ var Maybe = $.UnaryType(
 var Left = function(x) {
   return {
     '@@type': 'my-package/Either',
-    chain: function(f) { return this; },
+    'fantasy-land/equals': function(other) { return other.isLeft && Z.equals(other.value, x); },
+    'fantasy-land/concat': function(TK) { return TK; },
+    'fantasy-land/map': function(TK) { return TK; },
+    'fantasy-land/ap': function(TK) { return TK; },
+    'fantasy-land/of': function(x) { return Right(x); },
+    'fantasy-land/chain': function(f) { return this; },
+    'fantasy-land/reduce': function(f, initial) { return initial; },
     isLeft: true,
     isRight: false,
-    of: function(x) { return Right(x); },
-    reduce: function(f, initial) { return initial; },
-    toString: R.always('Left(' + R.toString(x) + ')'),
+    toString: function() { return 'Left(' + Z.toString(x) + ')'; },
     value: x
   };
 };
@@ -121,12 +134,16 @@ var Left = function(x) {
 var Right = function(x) {
   return {
     '@@type': 'my-package/Either',
-    chain: function(f) { return f(x); },
+    'fantasy-land/equals': function(other) { return other.isRight && Z.equals(other.value, x); },
+    'fantasy-land/concat': function(TK) { return TK; },
+    'fantasy-land/map': function(TK) { return TK; },
+    'fantasy-land/ap': function(TK) { return TK; },
+    'fantasy-land/of': function(x) { return Right(x); },
+    'fantasy-land/chain': function(f) { return f(x); },
+    'fantasy-land/reduce': function(f, initial) { return f(initial, x); },
     isLeft: false,
     isRight: true,
-    of: function(x) { return Right(x); },
-    reduce: function(f, initial) { return f(initial, x); },
-    toString: R.always('Right(' + R.toString(x) + ')'),
+    toString: function() { return 'Right(' + Z.toString(x) + ')'; },
     value: x
   };
 };
@@ -146,8 +163,9 @@ var Pair = function(x, y) {
     0: x,
     1: y,
     '@@type': 'my-package/Pair',
+    'fantasy-land/equals': function(other) { return Z.equals(other[0], x) && Z.equals(other[1], y); },
     length: 2,
-    toString: R.always('Pair(' + R.toString(x) + ', ' + R.toString(y) + ')')
+    toString: function() { return 'Pair(' + Z.toString(x) + ', ' + Z.toString(y) + ')'; }
   };
 };
 
@@ -155,8 +173,8 @@ var Pair = function(x, y) {
 var $Pair = $.BinaryType(
   'my-package/Pair',
   function(x) { return x != null && x['@@type'] === 'my-package/Pair'; },
-  R.take(1),
-  R.drop(1)
+  function(pair) { return [pair[0]]; },
+  function(pair) { return [pair[1]]; }
 );
 
 
@@ -348,9 +366,9 @@ describe('def', function() {
     var triple =
     def('triple', {}, [$.Number, $.Number, $.Number, $.Array($.Number)], list);
 
-    eq(triple(R.__, R.__, 3)(R.__, 2)(1), [1, 2, 3]);
+    eq(triple(_, _, 3)(_, 2)(1), [1, 2, 3]);
 
-    throws(function() { triple(R.__, /x/); },
+    throws(function() { triple(_, /x/); },
            errorEq(TypeError,
                    'Invalid value\n' +
                    '\n' +
@@ -362,7 +380,7 @@ describe('def', function() {
                    '\n' +
                    'The value at position 1 is not a member of ‘Number’.\n'));
 
-    throws(function() { triple(R.__, R.__, /x/); },
+    throws(function() { triple(_, _, /x/); },
            errorEq(TypeError,
                    'Invalid value\n' +
                    '\n' +
@@ -374,7 +392,7 @@ describe('def', function() {
                    '\n' +
                    'The value at position 1 is not a member of ‘Number’.\n'));
 
-    throws(function() { triple(R.__, 2, 3)(/x/); },
+    throws(function() { triple(_, 2, 3)(/x/); },
            errorEq(TypeError,
                    'Invalid value\n' +
                    '\n' +
@@ -427,10 +445,6 @@ describe('def', function() {
     throws(function() { $9(1, 2, 3, 4, 5, 6, 7, 8, 9, 10); },
            errorEq(TypeError,
                    '‘$9’ requires nine arguments; received 10 arguments'));
-
-    throws(function() { R.apply($9, R.range(0, 100)); },
-           errorEq(TypeError,
-                   '‘$9’ requires nine arguments; received 100 arguments'));
   });
 
   it('returns a function which type checks its arguments', function() {
@@ -584,14 +598,14 @@ describe('def', function() {
     var a000 = def('a00', {}, [a, a, a, $.Array(a)], Array);
     var anum = a000(1);
     var astr = a000('a');
-    var bstr = a000(R.__, 'b');
+    var bstr = a000(_, 'b');
     var abstr = astr('b');
 
     eq(anum(2, 3), [1, 2, 3]);
     eq(anum(2)(3), [1, 2, 3]);
     eq(astr('b', 'c'), ['a', 'b', 'c']);
     eq(bstr('a', 'c'), ['a', 'b', 'c']);
-    eq(astr(R.__, 'c')('b'), ['a', 'b', 'c']);
+    eq(astr(_, 'c')('b'), ['a', 'b', 'c']);
     eq(abstr('c'), ['a', 'b', 'c']);
   });
 
@@ -600,22 +614,19 @@ describe('def', function() {
     var def = $.create({checkTypes: true, env: env});
 
     //  a00 :: a -> a -> a
-    var a00 = def('a00', {}, [a, a, a], R.identity);
+    var a00 = def('a00', {}, [a, a, a], identity);
 
     //  a01 :: a -> Array a -> a
-    var a01 = def('a01', {}, [a, $.Array(a), a], R.identity);
+    var a01 = def('a01', {}, [a, $.Array(a), a], identity);
 
     //  a02 :: a -> Array (Array a) -> a
-    var a02 = def('a02', {}, [a, $.Array($.Array(a)), a], R.identity);
+    var a02 = def('a02', {}, [a, $.Array($.Array(a)), a], identity);
 
     //  ab02e :: a -> b -> Array (Array (Either a b)) -> a
-    var ab02e = def('ab02e', {}, [a, b, $.Array($.Array(Either(a, b))), a],
-                    R.identity);
+    var ab02e = def('ab02e', {}, [a, b, $.Array($.Array(Either(a, b))), a], identity);
 
     //  ab0e21 :: a -> b -> Either (Array (Array a)) (Array b) -> a
-    var ab0e21 = def('ab0e21', {},
-                     [a, b, Either($.Array($.Array(a)), $.Array(b)), a],
-                     R.identity);
+    var ab0e21 = def('ab0e21', {}, [a, b, Either($.Array($.Array(a)), $.Array(b)), a], identity);
 
     throws(function() { a00(1, 'a'); },
            errorEq(TypeError,
@@ -809,7 +820,7 @@ describe('def', function() {
 
   it('returns a function which type checks its return value', function() {
     //  add :: Number -> Number -> Number
-    var add = def('add', {}, [$.Number, $.Number, $.Number], R.always('XXX'));
+    var add = def('add', {}, [$.Number, $.Number, $.Number], function(x) { return 'XXX'; });
 
     throws(function() { add(2, 2); },
            errorEq(TypeError,
@@ -826,22 +837,22 @@ describe('def', function() {
 
   it('does not rely on constructor identity', function() {
     //  inc :: Number -> Number
-    var inc = def('inc', {}, [$.Number, $.Number], R.inc);
+    var inc = def('inc', {}, [$.Number, $.Number], function(x) { return x + 1; });
 
     eq(inc(42), 43);
     eq(inc(new Number(42)), 43);
     eq(inc(vm.runInNewContext('new Number(42)')), 43);
 
-    //  length :: Array String -> Number
-    var length = def('length', {}, [$.Array($.String), $.Number], R.length);
+    //  len :: Array String -> Number
+    var len = def('len', {}, [$.Array($.String), $.Number], length);
 
-    eq(length(['foo', 'bar', 'baz']), 3);
-    eq(length(vm.runInNewContext('["foo", "bar", "baz"]')), 3);
+    eq(len(['foo', 'bar', 'baz']), 3);
+    eq(len(vm.runInNewContext('["foo", "bar", "baz"]')), 3);
   });
 
   it('accommodates circular references', function() {
     //  id :: a -> a
-    var id = def('id', {}, [a, a], R.identity);
+    var id = def('id', {}, [a, a], identity);
 
     var x = {name: 'x'};
     var y = {name: 'y'};
@@ -873,7 +884,7 @@ describe('def', function() {
         '@@type': 'my-package/AnonMaybe',
         isNothing: false,
         isJust: true,
-        toString: R.always('AnonJust(' + R.toString(x) + ')'),
+        toString: function() { return 'AnonJust(' + Z.toString(x) + ')'; },
         value: x
       };
     };
@@ -966,7 +977,7 @@ describe('def', function() {
     var _def = $.create({checkTypes: true, env: _env});
 
     //  id :: a -> a
-    var id = _def('id', {}, [a, a], R.identity);
+    var id = _def('id', {}, [a, a], identity);
 
     eq(id('foo'), 'foo');
     eq(id('bar'), 'bar');
@@ -1088,7 +1099,7 @@ describe('def', function() {
                    'The value at position 1 is not a member of ‘Number’.\n'));
 
     //  id :: a -> a
-    var id = def('id', {}, [a, a], R.identity);
+    var id = def('id', {}, [a, a], identity);
 
     eq(id([{x: 0, y: 0}, {x: 1, y: 1}]), [{x: 0, y: 0}, {x: 1, y: 1}]);
 
@@ -1110,7 +1121,7 @@ describe('def', function() {
     def('toUpper',
         {},
         [$.Nullable($.String), $.Nullable($.String)],
-        R.unless(R.equals(null), R.toUpper));
+        function(ns) { return ns === null ? null : ns.toUpperCase(); });
 
     eq(toUpper(null), null);
     eq(toUpper('abc'), 'ABC');
@@ -1152,7 +1163,7 @@ describe('def', function() {
                    'Since there is no type of which all the above values are members, the type-variable constraint has been violated.\n'));
 
     //  f :: Nullable a -> Nullable a
-    var f = def('f', {}, [$.Nullable(a), $.Nullable(a)], R.always(42));
+    var f = def('f', {}, [$.Nullable(a), $.Nullable(a)], function(x) { return 42; });
 
     eq(f(null), 42);
     eq(f(0), 42);
@@ -1418,21 +1429,21 @@ describe('def', function() {
 
   it('supports the "StrMap" type constructor', function() {
     //  id :: a -> a
-    var id = def('id', {}, [a, a], R.identity);
+    var id = def('id', {}, [a, a], identity);
 
     //  keys :: StrMap a -> Array String
     var keys =
     def('keys',
         {},
         [$.StrMap(a), $.Array($.String)],
-        function(m) { return R.keys(m).sort(); });
+        function(m) { return Object.keys(m).sort(); });
 
     //  values :: StrMap a -> Array a
     var values =
     def('values',
         {},
         [$.StrMap(a), $.Array(a)],
-        function(m) { return R.map(R.prop(R.__, m), keys(m)); });
+        function(m) { return keys(m).map(function(k) { return m[k]; }); });
 
     var o = Object.create(null);
     o.x = 1;
@@ -1483,7 +1494,7 @@ describe('def', function() {
     def('testUnaryType',
         {},
         [$.Array($.StrMap($.Number)), $.Array($.StrMap($.Number))],
-        R.identity);
+        identity);
 
     eq(testUnaryType([{x: 1}, {y: 2}, {z: 3}]), [{x: 1}, {y: 2}, {z: 3}]);
 
@@ -1504,7 +1515,7 @@ describe('def', function() {
     def('testBinaryType',
         {},
         [Either(a, $.StrMap(b)), Either(a, $.StrMap(b))],
-        R.identity);
+        identity);
 
     eq(testBinaryType(Left('XXX')), Left('XXX'));
     eq(testBinaryType(Right({x: 1, y: 2, z: 3})), Right({x: 1, y: 2, z: 3}));
@@ -1524,10 +1535,10 @@ describe('def', function() {
 
   it('supports the "Pair" type constructor', function() {
     //  fst :: Pair a b -> a
-    var fst = def('fst', {}, [$.Pair(a, b), a], R.nth(0));
+    var fst = def('fst', {}, [$.Pair(a, b), a], function(pair) { return pair[0]; });
 
     //  snd :: Pair a b -> b
-    var snd = def('snd', {}, [$.Pair(a, b), b], R.nth(1));
+    var snd = def('snd', {}, [$.Pair(a, b), b], function(pair) { return pair[1]; });
 
     eq(fst(['foo', 42]), 'foo');
     eq(snd(['foo', 42]), 42);
@@ -1545,9 +1556,9 @@ describe('def', function() {
                    'The value at position 1 is not a member of ‘Pair a b’.\n'));
   });
 
-  it('uses R.toString-like string representations', function() {
+  it('uses Z.toString-like string representations', function() {
     //  f :: Null -> Null
-    var f = def('f', {}, [$.Null, $.Null], function(x) { return x; });
+    var f = def('f', {}, [$.Null, $.Null], identity);
 
     var Point = function Point(x, y) {
       this.x = x;
@@ -1577,7 +1588,9 @@ describe('def', function() {
       [o1, 'Object, StrMap ???']
     ];
 
-    values.forEach(R.apply(function(x, types) {
+    values.forEach(function(pair) {
+      var x = pair[0];
+      var types = pair[1];
       throws(function() { f(x); },
              errorEq(TypeError,
                      'Invalid value\n' +
@@ -1586,10 +1599,10 @@ describe('def', function() {
                      '     ^^^^\n' +
                      '      1\n' +
                      '\n' +
-                     '1)  ' + R.toString(x) + ' :: ' + types + '\n' +
+                     '1)  ' + Z.toString(x) + ' :: ' + types + '\n' +
                      '\n' +
                      'The value at position 1 is not a member of ‘Null’.\n'));
-    }));
+    });
   });
 
   it('supports polymorphism via type variables', function() {
@@ -1622,7 +1635,7 @@ describe('def', function() {
                    '\n' +
                    'Since there is no type of which all the above values are members, the type-variable constraint has been violated.\n'));
 
-    throws(function() { aa(R.__, 0)(/x/); },
+    throws(function() { aa(_, 0)(/x/); },
            errorEq(TypeError,
                    'Type-variable constraint violation\n' +
                    '\n' +
@@ -1669,7 +1682,7 @@ describe('def', function() {
                    'The value at position 1 is not a member of ‘Maybe a’.\n'));
 
     //  fst :: Pair a b -> a
-    var fst = def('fst', {}, [$Pair(a, b), a], R.nth(0));
+    var fst = def('fst', {}, [$Pair(a, b), a], function(pair) { return pair[0]; });
 
     eq(fst(Pair('XXX', 42)), 'XXX');
 
@@ -1690,7 +1703,7 @@ describe('def', function() {
     def('twin',
         {},
         [$Pair(a, a), $.Boolean],
-        function(pair) { return R.equals(pair[0], pair[1]); });
+        function(pair) { return Z.equals(pair[0], pair[1]); });
 
     eq(twin(Pair(42, 42)), true);
     eq(twin(Pair(42, 99)), false);
@@ -1819,7 +1832,16 @@ describe('def', function() {
 
     //  unnest :: Array (Array a) -> Array a
     var unnest =
-    def('unnest', {}, [$.Array($.Array(a)), $.Array(a)], R.unnest);
+    def('unnest',
+        {},
+        [$.Array($.Array(a)), $.Array(a)],
+        function(xss) {
+          var xs = [];
+          for (var idx = 0; idx < xss.length; idx += 1) {
+            Array.prototype.push.apply(xs, xss[idx]);
+          }
+          return xs;
+        });
 
     eq(unnest([[1, 2], [3, 4], [5, 6]]), [1, 2, 3, 4, 5, 6]);
     eq(unnest([[null], [null], [null]]), [null, null, null]);
@@ -1843,7 +1865,7 @@ describe('def', function() {
         [$.Array(Either($.String, $.Integer)),
          $.Array(Either($.String, $.Integer)),
          $.Array(Either($.String, $.Integer))],
-        R.always([Left(/xxx/)]));
+        function(xs, ys) { return [Left(/xxx/)]; });
 
     throws(function() { concatComplex([Left(/xxx/), Right(0), Right(0.1), Right(0.2)]); },
            errorEq(TypeError,
@@ -1953,7 +1975,7 @@ describe('def', function() {
     def('concatNested',
         {},
         [$.Array($.Array(a)), $.Array($.Array(a)), $.Array($.Array(a))],
-        R.always([['a', 'b', 'c'], [1, 2, 3]]));
+        function(xs, ys) { return [['a', 'b', 'c'], [1, 2, 3]]; });
 
     throws(function() { concatNested([['a', 'b', 'c'], [1, 2, 3]]); },
            errorEq(TypeError,
@@ -2011,16 +2033,16 @@ describe('def', function() {
     //  Pair :: Type
     var Pair = $.BinaryType(
       'my-package/Pair',
-      R.both(R.is(Array), R.propEq('length', 2)),
-      R.compose(R.of, R.nth(0)),
-      R.compose(R.of, R.nth(1))
+      function(x) { return Object.prototype.toString.call(x) === '[object Array]' && x.length === 2; },
+      function(pair) { return [pair[0]]; },
+      function(pair) { return [pair[1]]; }
     );
 
     var env = $.env.concat([Either, Pair]);
     var def = $.create({checkTypes: true, env: env});
 
     //  id :: a -> a
-    var id = def('id', {}, [a, a], R.identity);
+    var id = def('id', {}, [a, a], identity);
 
     eq(id(['abc', 123]), ['abc', 123]);
     eq(id([Left('abc'), 123]), [Left('abc'), 123]);
@@ -2046,7 +2068,7 @@ describe('def', function() {
     def('f',
         {},
         [$.Function([$.String, $.Number]), $.Array($.String), $.Array($.Number)],
-        R.map);
+        function(f, xs) { return xs.map(function(x) { return f(x); }); });
 
     //  g :: (String -> Number) -> Array String -> Array Number
     var g =
@@ -2055,7 +2077,7 @@ describe('def', function() {
         [$.Function([$.String, $.Number]), $.Array($.String), $.Array($.Number)],
         function(f, xs) { return f(xs); });
 
-    eq(f(R.length, ['foo', 'bar', 'baz', 'quux']), [3, 3, 3, 4]);
+    eq(f(length, ['foo', 'bar', 'baz', 'quux']), [3, 3, 3, 4]);
 
     throws(function() { g(/xxx/); },
            errorEq(TypeError,
@@ -2069,7 +2091,7 @@ describe('def', function() {
                    '\n' +
                    'The value at position 1 is not a member of ‘String -> Number’.\n'));
 
-    throws(function() { g(R.length, ['a', 'b', 'c']); },
+    throws(function() { g(length, ['a', 'b', 'c']); },
            errorEq(TypeError,
                    'Invalid value\n' +
                    '\n' +
@@ -2081,7 +2103,7 @@ describe('def', function() {
                    '\n' +
                    'The value at position 1 is not a member of ‘String’.\n'));
 
-    throws(function() { f(R.identity, ['a', 'b', 'c']); },
+    throws(function() { f(identity, ['a', 'b', 'c']); },
            errorEq(TypeError,
                    'Invalid value\n' +
                    '\n' +
@@ -2105,9 +2127,6 @@ describe('def', function() {
           }
           return result;
         });
-
-    //  length :: Array a -> Integer
-    var length = function(xs) { return xs.length; };
 
     eq(map(length, ['foo', 'bar']), [3, 3]);
 
@@ -2230,7 +2249,9 @@ describe('def', function() {
 
     //  Alternative :: TypeClass
     var Alternative =
-    $.TypeClass('my-package/Alternative', hasMethods(['empty', 'or']));
+    Z.TypeClass('my-package/Alternative',
+                [Z.Monoid],
+                function(x) { return x != null && typeof x.or === 'function'; });
 
     //  or :: Alternative a => a -> a -> a
     var or = def('or', {a: [Alternative]}, [a, a, a], function(x, y) {
@@ -2254,7 +2275,7 @@ describe('def', function() {
                    '\n' +
                    '‘or’ requires ‘a’ to satisfy the Alternative type-class constraint; the value at position 1 does not.\n'));
 
-    throws(function() { or(R.__, Right(1)); },
+    throws(function() { or(_, Right(1)); },
            errorEq(TypeError,
                    'Type-class constraint violation\n' +
                    '\n' +
@@ -2266,12 +2287,8 @@ describe('def', function() {
                    '\n' +
                    '‘or’ requires ‘a’ to satisfy the Alternative type-class constraint; the value at position 1 does not.\n'));
 
-    //  Semigroup :: TypeClass
-    var Semigroup =
-    $.TypeClass('my-package/Semigroup', hasMethods(['concat']));
-
     //  concat :: Semigroup a => a -> a -> a
-    var concat = def('concat', {a: [Semigroup]}, [a, a, a], function(x, y) {
+    var concat = def('concat', {a: [Z.Semigroup]}, [a, a, a], function(x, y) {
       return x.concat(y);
     });
 
@@ -2290,7 +2307,7 @@ describe('def', function() {
                    '\n' +
                    '‘concat’ requires ‘a’ to satisfy the Semigroup type-class constraint; the value at position 1 does not.\n'));
 
-    throws(function() { concat(R.__, /x/); },
+    throws(function() { concat(_, /x/); },
            errorEq(TypeError,
                    'Type-class constraint violation\n' +
                    '\n' +
@@ -2330,31 +2347,23 @@ describe('def', function() {
                    '\n' +
                    'Since there is no type of which all the above values are members, the type-variable constraint has been violated.\n'));
 
-    //  Monad :: TypeClass
-    var Monad =
-    $.TypeClass('my-package/Monad', hasMethods(['chain', 'of']));
-
-    //  Monoid :: TypeClass
-    var Monoid =
-    $.TypeClass('my-package/Monoid', hasMethods(['concat', 'empty']));
-
     //  filter :: (Monad m, Monoid (m a)) => (a -> Boolean) -> m a -> m a
     var filter =
     def('filter',
-        {m: [Monad, Monoid]},
+        {m: [Z.Monad, Z.Monoid]},
         [$.Function([a, $.Boolean]), m(a), m(a)],
         function(pred, m) {
-          return m.chain(function(x) {
-            return pred(x) ? m.of(x) : m.empty();
-          });
+          return Z.chain(function(x) { return pred(x) ? m['fantasy-land/of'](x) : Z.empty(m); }, m);
         });
 
-    eq(filter(R.T, Just(42)), Just(42));
-    eq(filter(R.F, Just(42)), Nothing);
-    eq(filter(R.T, Nothing), Nothing);
-    eq(filter(R.F, Nothing), Nothing);
+    //  even :: Integer -> Boolean
+    var even = function(x) { return x % 2 === 0; };
 
-    throws(function() { filter(R.F, [1, 2, 3]); },
+    eq(filter(even, Nothing), Nothing);
+    eq(filter(even, Just(9)), Nothing);
+    eq(filter(even, Just(4)), Just(4));
+
+    throws(function() { filter(even, 42); },
            errorEq(TypeError,
                    'Type-class constraint violation\n' +
                    '\n' +
@@ -2362,11 +2371,11 @@ describe('def', function() {
                    '           ^^^^^^^                                 ^^^\n' +
                    '                                                    1\n' +
                    '\n' +
-                   '1)  [1, 2, 3] :: Array Number, Array Integer\n' +
+                   '1)  42 :: Number, Integer\n' +
                    '\n' +
                    '‘filter’ requires ‘m’ to satisfy the Monad type-class constraint; the value at position 1 does not.\n'));
 
-    throws(function() { filter(R.F, Right(42)); },
+    throws(function() { filter(even, Right(42)); },
            errorEq(TypeError,
                    'Type-class constraint violation\n' +
                    '\n' +
@@ -2381,9 +2390,9 @@ describe('def', function() {
     //  concatMaybes :: Semigroup a => Maybe a -> Maybe a -> Maybe a
     var concatMaybes =
     def('concatMaybes',
-        {a: [Semigroup]},
+        {a: [Z.Semigroup]},
         [Maybe(a), Maybe(a), Maybe(a)],
-        R.always(Just(/xxx/)));
+        function(x, y) { return Just(/xxx/); });
 
     throws(function() { concatMaybes(Just(/xxx/)); },
            errorEq(TypeError,
@@ -2424,7 +2433,7 @@ describe('def', function() {
     //  sillyConst :: (Alternative a, Semigroup b) => a -> b -> a
     var sillyConst =
     def('sillyConst',
-        {a: [Alternative], b: [Semigroup]},
+        {a: [Alternative], b: [Z.Semigroup]},
         [a, b, a],
         function(x, y) { return x; });
 
@@ -2450,23 +2459,20 @@ describe('def', function() {
     //  f :: Type
     var f = $.UnaryTypeVariable('f');
 
-    //  Functor :: TypeClass
-    var Functor = $.TypeClass(
-      'my-package/Functor',
-      function(x) { return x != null && typeof x.map === 'function'; }
-    );
-
     //  map :: Functor f => (a -> b) -> f a -> f b
     var map =
     def('map',
-        {f: [Functor]},
+        {f: [Z.Functor]},
         [$.Function([a, b]), f(a), f(b)],
-        function(f, functor) { return functor.map(f); });
+        function(f, functor) { return functor['fantasy-land/map'](f); });
 
-    eq(map(R.inc, Nothing), Nothing);
-    eq(map(R.inc, Just(42)), Just(43));
+    eq(map(Math.sqrt, Nothing), Nothing);
+    eq(map(Math.sqrt, Just(9)), Just(3));
 
-    throws(function() { map(R.inc, [1, 2, 3]); },
+    var xs = [1, 4, 9];
+    xs['fantasy-land/map'] = xs.map;
+
+    throws(function() { map(Math.sqrt, xs); },
            errorEq(TypeError,
                    '‘map’ applied ‘a -> b’ to the wrong number of arguments\n' +
                    '\n' +
@@ -2478,27 +2484,27 @@ describe('def', function() {
                    '\n' +
                    '  - 1\n' +
                    '  - 0\n' +
-                   '  - [1, 2, 3]\n'));
-
-    //  Foldable :: TypeClass
-    var Foldable = $.TypeClass('my-package/Foldable', hasMethods(['reduce']));
+                   '  - [1, 4, 9, "fantasy-land/map": function map() { [native code] }]\n'));
 
     //  sum :: Foldable f => f FiniteNumber -> FiniteNumber
     var sum =
     def('sum',
-        {f: [Foldable]},
+        {f: [Z.Foldable]},
         [f($.FiniteNumber), $.FiniteNumber],
         function(foldable) {
-          return foldable.reduce(function(x, y) { return x + y; }, 0);
+          return foldable['fantasy-land/reduce'](function(x, y) { return x + y; }, 0);
         });
 
-    eq(sum([1, 2, 3, 4, 5]), 15);
+    var ys = [1, 2, 3, 4, 5];
+    ys['fantasy-land/reduce'] = function(f, y) { return this.reduce(f, y); };
+    eq(sum(ys), 15);
+
     eq(sum(Nothing), 0);
     eq(sum(Just(42)), 42);
     eq(sum(Left('XXX')), 0);
     eq(sum(Right(42)), 42);
 
-    throws(function() { sum({x: 1, y: 2, z: 3}); },
+    throws(function() { sum(42); },
            errorEq(TypeError,
                    'Type-class constraint violation\n' +
                    '\n' +
@@ -2506,11 +2512,11 @@ describe('def', function() {
                    '       ^^^^^^^^^^    ^^^^^^^^^^^^^^\n' +
                    '                           1\n' +
                    '\n' +
-                   '1)  {"x": 1, "y": 2, "z": 3} :: Object, StrMap Number\n' +
+                   '1)  42 :: Number\n' +
                    '\n' +
                    '‘sum’ requires ‘f’ to satisfy the Foldable type-class constraint; the value at position 1 does not.\n'));
 
-    throws(function() { sum(['foo', 'bar', 'baz']); },
+    throws(function() { sum(Just(Infinity)); },
            errorEq(TypeError,
                    'Invalid value\n' +
                    '\n' +
@@ -2518,7 +2524,7 @@ describe('def', function() {
                    '                       ^^^^^^^^^^^^\n' +
                    '                            1\n' +
                    '\n' +
-                   '1)  "foo" :: String\n' +
+                   '1)  Infinity :: Number\n' +
                    '\n' +
                    'The value at position 1 is not a member of ‘FiniteNumber’.\n'));
   });
